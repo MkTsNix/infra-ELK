@@ -1,0 +1,86 @@
+---
+ - name: 'Prepare stands for nginx'
+   hosts: nginx
+   become: true
+   gather_facts: true
+   vars:
+     elasticsearch_repo_path: /etc/yum.repos.d/elasticsearch-7.x.repo
+
+   tasks:
+     - name: 'Install required packages'
+       yum:
+         name:
+           - nano
+           - net-tools
+           - epel-release
+         state: present
+
+     - name: 'Create file for elasticsearch repo'
+       file:
+         path: "{{ elasticsearch_repo_path }}"
+         state: touch
+
+     - name: 'Add ELK repo'
+       blockinfile:
+         path: "{{ elasticsearch_repo_path }}"
+         block: |
+           [elasticsearch-7.x]
+           name=Elasticsearch repository for 7.x packages
+           baseurl=https://artifacts.elastic.co/packages/7.x/yum
+           gpgcheck=1
+           gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+           enabled=1
+           autorefresh=1
+           type=rpm-md
+
+     - name: 'Install packeges on nginx server'
+       yum:
+         name:
+           - nginx
+           - filebeat
+         state: present
+       when: ansible_hostname=='nginx'
+       notify:
+         - restart nginx
+
+     - name: 'Add config for filebeat'
+       template:
+         src: ../templates/filebeat.yml.j2
+         dest: /etc/filebeat/filebeat.yml
+       notify:
+         - restart filebeat
+
+     - name: ' Add nginx.conf to auditd'
+       shell: auditctl -a exit,always -F path=/etc/nginx/nginx.conf -F perm=rwa
+
+     - name: 'Start Firewalld'
+       systemd:
+         name: firewalld
+         state: started
+
+     - name: 'Add firewalld rules'
+       firewalld:
+         port: '80/tcp'
+         permanent: yes
+         state: enabled
+       notify:
+         - reload firewalld
+
+   handlers:
+     - name: restart nginx
+       systemd:
+         name: nginx
+         state: restarted
+         enabled: yes
+
+     - name: restart filebeat
+       systemd:
+         name: filebeat
+         state: restarted
+         enabled: yes
+
+     - name: reload firewalld
+       systemd:
+         name: firewalld
+         state: reloaded
+         enabled: yes

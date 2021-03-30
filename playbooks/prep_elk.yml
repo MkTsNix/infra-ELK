@@ -1,0 +1,111 @@
+---
+ - name: 'Prepare stands for ELK hw'
+   hosts: elk
+   become: true
+   gather_facts: true
+   vars:
+     elasticsearch_repo_path: /etc/yum.repos.d/elasticsearch-7.x.repo
+     elasticsearch_network_host: 127.0.0.1
+     kibana_server_host: 192.168.11.191
+   tasks:
+     - name: 'Install required packages'
+       yum:
+         name:
+           - nano
+           - net-tools
+           - epel-release
+         state: present
+
+     - name: 'Create file for elasticsearch repo'
+       file:
+         path: "{{ elasticsearch_repo_path }}"
+         state: touch
+
+     - name: 'Add ELK repo'
+       blockinfile:
+         path: "{{ elasticsearch_repo_path }}"
+         block: |
+           [elasticsearch-7.x]
+           name=Elasticsearch repository for 7.x packages
+           baseurl=https://artifacts.elastic.co/packages/7.x/yum
+           gpgcheck=1
+           gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+           enabled=1
+           autorefresh=1
+           type=rpm-md
+
+     - name: 'Start Firewalld'
+       systemd:
+         name: firewalld
+         state: started
+
+     - name: 'Add firewalld rules'
+       firewalld:
+         port: '{{ item }}'
+         permanent: yes
+         state: enabled
+       loop:
+         - 5044/tcp
+         - 5601/tcp
+       notify:
+         - reload firewalld
+
+     - name: 'Install ELK'
+       yum:
+         name:
+           - java-1.8.0-openjdk
+           - elasticsearch
+           - logstash
+           - kibana
+         state: present
+
+     - name: 'Create elasticsearch config file from template'
+       template:
+         src: ../templates/elasticsearch.yml.j2
+         dest: /etc/elasticsearch/elasticsearch.yml
+       notify:
+         - restart elasticsearch
+
+
+     - name: 'Create kibana config file from template'
+       template:
+         src: ../templates/kibana.yml.j2
+         dest: /etc/kibana/kibana.yml
+       notify:
+         - restart kibana
+
+
+     - name: 'Create logstash config file from template'
+       template: src={{ item.src }} dest={{ item.dest }}
+       with_items:
+         - { src: '../templates/logstash_input.conf.j2', dest: '/etc/logstash/conf.d/input.conf'}
+         - { src: '../templates/logstash_output.conf.j2', dest: '/etc/logstash/conf.d/output.conf'}
+         - { src: '../templates/01-nginx_access_filter.conf.j2', dest: '/etc/logstash/conf.d/01-nginx_access_filter.conf'}
+         - { src: '../templates/02-nginx_error_filter.conf.j2', dest: '/etc/logstash/conf.d/02-nginx_error_filter.conf'}
+       notify:
+         - restart logstash
+
+   handlers:
+     - name: restart elasticsearch
+       systemd:
+         name: elasticsearch
+         state: restarted
+         enabled: yes
+
+     - name: restart logstash
+       systemd:
+         name: logstash
+         state: restarted
+         enabled: yes
+
+     - name: restart kibana
+       systemd:
+         name: kibana
+         state: restarted
+         enabled: yes
+
+     - name: reload firewalld
+       systemd:
+         name: firewalld
+         state: reloaded
+         enabled: yes
